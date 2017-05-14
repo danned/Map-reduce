@@ -1,0 +1,3 @@
+#ignore.beam and .dat
+*.beam
+*.dat
