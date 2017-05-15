@@ -44,16 +44,13 @@ map_reduce_par_dist(Map,M,Reduce,R,Input) ->
     %io:fwrite("map_reduce_par_dist: Working with ~w nodes\n", length(Nodes)),
     io:fwrite(user,"map_reduce_par_dist: input is split into ~w chunks\n", [length(Splits)]),
 
-    MapperFuns = [generate_mapper(Parent,Map,R,Split) || Split <- Splits],
+    Mappers = [generate_mapper(Parent,Map,R,Split) || Split <- Splits],
     % open file on all nodes
     [spawn(E, page_rank,open_file,[])|| E <- nodes()],
     % sending list of functions into the worker pool
-    Results = worker_pool(MapperFuns),
-    %Mappeds = [receive {Pid,L} -> L end || Pid <- Mappers],
-    ReducerFuns = [generate_reducer(Parent,Reduce,I,Results) || I <- lists:seq(0,R-1)],
-    io:fwrite("ReducerFuns: ~w\n",[ReducerFuns]),
-    Reduceds = worker_pool(ReducerFuns),
-    %Reduceds = [receive {Pid,L} -> L end || Pid <- Reducers],
+    Mappeds = worker_pool(Mappers),
+    Reducers = [generate_reducer(Parent,Reduce,I,Mappeds) || I <- lists:seq(0,R-1)],
+    Reduceds = worker_pool(Reducers),
     lists:sort(lists:flatten(Reduceds)).
 
 spawn_mapper(Parent,Map,R,Split) ->
@@ -94,7 +91,6 @@ spawn_reducer(Parent,Reduce,I,Mappeds) ->
 
 worker_pool(Funs) ->
     io:fwrite("Starting worker pool\n"),
-    %io:fwrite("Functions in pool are ~w \n",[Funs]),
     worker_pool(Funs,nodes() ++ [node()], [], []).
 
 % will go through list of functions and keep all nodes busy with work
@@ -104,12 +100,12 @@ worker_pool([H| Funs] ,[N|Nodes], Results, InFlight) ->
 
 % all workers busy. Wait for worker to finish
 worker_pool(Funs, [], Results, InFlight) ->
-    io:fwrite("All workers busy\n",[]),
+    %io:fwrite("All workers busy\n",[]),
     io:fwrite("Splits remaining: ~w\nActive workers: ~w\n",[length(Funs), length(InFlight)]),
     % if any process finished work. save result and put node back in worker pool
     receive {Pid,L} -> 
         Node = node(Pid),
-        io:fwrite("Received results from node ~w\n",[Node]),
+        %io:fwrite("Received results from node ~w\n",[Node]),
         worker_pool(Funs, [Node], Results ++ [L], [{N,F}||{N,F}<-InFlight, N =/= Node])
     end;
 % no more splits to process, all results received
@@ -119,10 +115,12 @@ worker_pool([], _, Results, [])->
     
 % no more splits to process,
 worker_pool([], Nodes, Results, InFlight)  -> 
+    io:fwrite("Waiting for processes to finish\n"),
     receive {Pid,L} -> 
         Node = node(Pid),
         worker_pool([], Nodes ++ [Node], Results ++ [L], [{N,F}||{N,F}<-InFlight, N =/= Node])
-    after 50000 ->
+    %1000 ms timeout works quite well
+    after 1000 ->
         io:fwrite("Timeout\n"),
         worker_pool([F||{_,F}<-InFlight], Nodes, Results, [])
     end.
