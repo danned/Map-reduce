@@ -42,27 +42,36 @@ map_reduce_par_dist(Map,M,Reduce,R,Input) ->
     Parent = self(),
     Splits = split_into(M,Input),
     %io:fwrite("map_reduce_par_dist: Working with ~w nodes\n", length(Nodes)),
-    io:fwrite("map_reduce_par_dist: input is split into ~w chunks\n", [length(Splits)]),
+    io:fwrite(user,"map_reduce_par_dist: input is split into ~w chunks\n", [length(Splits)]),
 
-    Funs = [generate_function(Parent,Map,R,Split) || Split <- Splits],
+    MapperFuns = [generate_mapper(Parent,Map,R,Split) || Split <- Splits],
     % open file on all nodes
-    [spawn(E, fun () -> dets:open_file(web,[{file,"web.dat"}]) end)|| E <- nodes()],
+    [spawn(E, page_rank,open_file,[])|| E <- nodes()],
     % sending list of functions into the worker pool
-    Results = worker_pool(Funs),
+    Results = worker_pool(MapperFuns),
     %Mappeds = [receive {Pid,L} -> L end || Pid <- Mappers],
-    Reducers = [spawn_reducer(Parent,Reduce,I,Results) || I <- lists:seq(0,R-1)],
-    Reduceds = [receive {Pid,L} -> L end || Pid <- Reducers],
+    ReducerFuns = [generate_reducer(Parent,Reduce,I,Results) || I <- lists:seq(0,R-1)],
+    io:fwrite("ReducerFuns: ~w\n",[ReducerFuns]),
+    Reduceds = worker_pool(ReducerFuns),
+    %Reduceds = [receive {Pid,L} -> L end || Pid <- Reducers],
     lists:sort(lists:flatten(Reduceds)).
-    
+
 spawn_mapper(Parent,Map,R,Split) ->
     spawn_link(fun() ->
-                   Mapped = [{erlang:phash2(K2,R),{K2,V2}}
-                               || {K,V} <- Split,
-                                  {K2,V2} <- Map (K,V) ],
-                   Parent ! {self(),group(lists:sort(Mapped))}
-               end).
+                    Mapped = [{erlang:phash2(K2,R),{K2,V2}}
+                                || {K,V} <- Split,
+                                    {K2,V2} <- Map (K,V) ],
+                    Parent ! {self(),group(lists:sort(Mapped))}
+                end).
 
-generate_function(Parent,Map,R,Split) ->
+generate_reducer(Parent,Reduce,I,Mappeds) ->
+    Inputs = [KV || Mapped <- Mappeds,
+                    {J,KVs} <- Mapped,
+                    I==J,
+                    KV <- KVs],
+    fun() -> Parent ! {self(),reduce_seq(Reduce,Inputs)} end.
+
+generate_mapper(Parent,Map,R,Split) ->
     fun() ->
         Mapped = [{erlang:phash2(K2,R),{K2,V2}}
                     || {K,V} <- Split,
@@ -85,25 +94,26 @@ spawn_reducer(Parent,Reduce,I,Mappeds) ->
 
 worker_pool(Funs) ->
     io:fwrite("Starting worker pool\n"),
-    io:fwrite("Functions in pool are ~w \n",[Funs]),
-    worker_pool(Funs,nodes() ++ [node()], [], 0).
+    %io:fwrite("Functions in pool are ~w \n",[Funs]),
+    worker_pool(Funs,nodes() ++ [node()], [], []).
 
 % will go through list of functions and keep all nodes busy with work
-worker_pool([F| Funs] ,[N|Nodes], Results, InFlight) ->
-    spawn_link(N,F),
-    worker_pool(Funs, Nodes, Results, InFlight +1);
+worker_pool([H| Funs] ,[N|Nodes], Results, InFlight) ->
+    spawn(N,H),
+    worker_pool(Funs, Nodes, Results, InFlight ++ [{N,H}]);
 
 % all workers busy. Wait for worker to finish
-worker_pool(F, [], Results, InFlight) ->
+worker_pool(Funs, [], Results, InFlight) ->
     io:fwrite("All workers busy\n",[]),
+    io:fwrite("Splits remaining: ~w\nActive workers: ~w\n",[length(Funs), length(InFlight)]),
     % if any process finished work. save result and put node back in worker pool
     receive {Pid,L} -> 
         Node = node(Pid),
         io:fwrite("Received results from node ~w\n",[Node]),
-        worker_pool(F, [Node], Results ++ [L], InFlight -1)
+        worker_pool(Funs, [Node], Results ++ [L], [{N,F}||{N,F}<-InFlight, N =/= Node])
     end;
 % no more splits to process, all results received
-worker_pool([], _, Results, InFlight) when InFlight == 0 ->
+worker_pool([], _, Results, [])->
     io:fwrite("All results received\n"),
     Results;
     
@@ -111,5 +121,10 @@ worker_pool([], _, Results, InFlight) when InFlight == 0 ->
 worker_pool([], Nodes, Results, InFlight)  -> 
     receive {Pid,L} -> 
         Node = node(Pid),
-        worker_pool([], Nodes ++ [Node], Results ++ [L], InFlight -1)
+        worker_pool([], Nodes ++ [Node], Results ++ [L], [{N,F}||{N,F}<-InFlight, N =/= Node])
+    after 50000 ->
+        io:fwrite("Timeout\n"),
+        worker_pool([F||{_,F}<-InFlight], Nodes, Results, [])
     end.
+
+

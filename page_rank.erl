@@ -29,7 +29,7 @@ page_rank() ->
 page_rank_distr() ->
    dets:open_file(web,[{file,"web.dat"}]),
    Urls = dets:foldl(fun({K,_},Keys)->[K|Keys] end,[],web),
-   map_reduce:map_reduce_par_dist(fun map/2, 30, fun reduce/2, 30,
+   map_reduce:map_reduce_par_dist(fun map/2, 64, fun reduce/2, 64,
                                     [{Url,ok} || Url <- Urls]).
 
 
@@ -42,4 +42,8 @@ benchmark(F) ->
     U1 = Time1 * 1000,
     U2 = Time2 * 1000,
     io:format("Code time=~p (~p) microseconds~n",
-    [U1,U2]).
+[U1,U2]).
+
+open_file()->
+    io:fwrite(user,"Opening file\n",[]),
+    dets:open_file(web,[{file,"web.dat"}]).
