@@ -51,7 +51,8 @@ map_reduce_par_dist(Map,M,Reduce,R,Input) ->
     Mappeds = worker_pool(Mappers),
     Reducers = [generate_reducer(Parent,Reduce,I,Mappeds) || I <- lists:seq(0,R-1)],
     Reduceds = worker_pool(Reducers),
-    lists:sort(lists:flatten(Reduceds)).
+    Results = lists:sort(lists:flatten(Reduceds)),
+	file:write_file("results.txt", io_lib:fwrite("~p.\n", [Results])).
 
 spawn_mapper(Parent,Map,R,Split) ->
     spawn_link(fun() ->
@@ -120,7 +121,7 @@ worker_pool([], Nodes, Results, InFlight)  ->
         Node = node(Pid),
         worker_pool([], Nodes ++ [Node], Results ++ [L], [{N,F}||{N,F}<-InFlight, N =/= Node])
     %1000 ms timeout works quite well
-    after 1000 ->
+    after 3000 ->
         io:fwrite("Timeout\n"),
         worker_pool([F||{_,F}<-InFlight], Nodes, Results, [])
     end.

@@ -7,6 +7,7 @@
 
 -module(page_rank).
 -compile(export_all).
+-import(crawl, [find_urls/2]).
 
 %% Use map_reduce to count word occurrences
 map(Url,ok) ->
