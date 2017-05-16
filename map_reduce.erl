@@ -121,7 +121,7 @@ worker_pool([], Nodes, Results, InFlight)  ->
         Node = node(Pid),
         worker_pool([], Nodes ++ [Node], Results ++ [L], [{N,F}||{N,F}<-InFlight, N =/= Node])
     %1000 ms timeout works quite well
-    after 3000 ->
+    after 10000 ->
         io:fwrite("Timeout\n"),
         worker_pool([F||{_,F}<-InFlight], Nodes, Results, [])
     end.
